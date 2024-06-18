@@ -5,6 +5,7 @@ require('dotenv').config();
 const jwt = require("jsonwebtoken")
 const port = process.env.PORT || 5000;
 
+
 app.use(cors());
 app.use(express.json());
 
@@ -12,14 +13,14 @@ app.use(express.json());
 //verify token
 const verifyJWT = (req, res, next) => {
   const authorization = req.headers.authorization;
-  if(!authorization){
-    return res.status(401).send({message: 'Invalid authorization'})
+  if (!authorization) {
+    return res.status(401).send({ error: true, message: 'Unauthorize access' })
   }
 
   const token = authorization?.split(' ')[1];
   jwt.verify(token, process.env.ASSESS_SECRET, (err, decode) => {
-    if(err) {
-      return res.status(403).send({message: 'Forbidden access'})
+    if (err) {
+      return res.status(403).send({ error: true, message: 'Forbidden user or token has expired' })
     }
     req.decode = decode;
     next();
@@ -44,9 +45,10 @@ async function run() {
     // Connect the client to the server
     await client.connect();
 
+
     // Create a database and collections
     database = client.db("nckh-master");
-    usersCollection = database.collection("users");
+    userCollection = database.collection("users");
     classesCollection = database.collection("classes");
     cartCollection = database.collection("cart");
     paymentCollection = database.collection("payments");
@@ -64,40 +66,28 @@ async function run() {
 
 run().catch(console.dir);
 
-//App routers for users
-app.post("/api/set-token", async (req, res) => {
-  try {
-    const user = req.body;
-    const token = jwt.sign(user, process.env.ASSESS_SECRET,{
-      expiresIn: '24h'
-    });
-    res.send({token});
-  } catch (error) {
-    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
-  }
-});
 
-
-//middleware for admin and instructor
 const verifyAdmin = async (req, res, next) => {
-  const email = req.decode.email;
-  const query = {email: email};
-  const user = await usersCollection.findOne(query);
-  if(user.role == "admin"){
-    next();
-  }else{
-    return res.status(401).send({message: 'Unauthorized access'})
+  const email = req.decoded.email;
+  const query = { email: email };
+  const user = await userCollection.findOne(query);
+  if (user.role === 'admin') {
+    next()
+  }
+  else {
+    return res.status(401).send({ error: true, message: 'Unauthorize access' })
   }
 }
 
 const verifyInstructor = async (req, res, next) => {
-  const email = req.decode.email;
-  const query = {email: email};
-  const user = await usersCollection.findOne(query);
-  if(user.role == "instructor"){
-    next();
-  }else{
-    return res.status(401).send({message: 'Unauthorized access'})
+  const email = req.decoded.email;
+  const query = { email: email };
+  const user = await userCollection.findOne(query);
+  if (user.role === 'instructor' || user.role === 'admin') {
+    next()
+  }
+  else {
+    return res.status(401).send({ error: true, message: 'Unauthorize access' })
   }
 }
 
@@ -105,40 +95,54 @@ const verifyInstructor = async (req, res, next) => {
 app.post('/new-user', async (req, res) => {
   try {
     const newUser = req.body;
-    const result = await usersCollection.insertOne(newUser);
+    const result = await userCollection.insertOne(newUser);
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
   }
 });
 
+//App routers for users
+app.post("/api/set-token", async (req, res) => {
+  try {
+    const user = req.body;
+    const token = jwt.sign(user, process.env.ACCESS_SECRET, { expiresIn: '24h' })
+    res.send({ token })
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+  }
+});
+
+//Get all user
 app.get('/users', async (req, res) => {
   try {
-    const result = await usersCollection.find({}).toArray();
-    res.send(result);
+    const users = await userCollection.find({}).toArray();
+    res.send(users);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
   }
 });
 
 
+//Get user by id
 app.get('/users/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    const query = {_id : new ObjectId(id) };
-    const result = await usersCollection.findOne(query);
-    res.send(result);
+    const query = { _id: new ObjectId(id) };
+    const user = await userCollection.findOne(query);
+    res.send(user);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
   }
 });
 
 
-app.get('/user/:email',verifyJWT, async (req, res) => {
+//Get user by email
+app.get('/user/:email', verifyJWT, async (req, res) => {
   try {
     const email = req.params.email;
-    const query = {email: email};
-    const result = await usersCollection.findOne(query);
+    const query = { email: email };
+    const result = await userCollection.findOne(query);
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
@@ -146,44 +150,52 @@ app.get('/user/:email',verifyJWT, async (req, res) => {
 });
 
 
-app.get('/update-user/:id',verifyJWT,verifyAdmin, async (req, res) => {
+//Delete a user
+app.delete('/delete-user/:id', verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const query = { _id: new ObjectId(id) };
+    const result = await userCollection.deleteOne(query);
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+  }
+});
+
+
+//UPDATE USER
+app.put('/update-user/:id', verifyJWT, verifyAdmin, async (req, res) => {
   try {
     const id = req.params.id;
     const updatedUser = req.body;
-    const filter = {_id: new ObjectId(id)};
-    const options = {upsert: true};
+    const filter = { _id: new ObjectId(id) };
+    const options = { upsert: true };
     const updateDoc = {
-      $set:{
-        name : updatedUser.name,
-        email : updatedUser.email,
-        role : updatedUser.option,
-        address : updatedUser.address,
-        about : updatedUser.about,
-        photoUrl : updatedUser.photoUrl,
+      $set: {
+        name: updatedUser.name,
+        email: updatedUser.email,
+        role: updatedUser.option,
+        address: updatedUser.address,
+        phone: updatedUser.phone,
+        about: updatedUser.about,
+        photoUrl: updatedUser.photoUrl,
         skills: updatedUser.skills ? updatedUser.skills : null,
       }
     }
-    const result = await usersCollection.updateOne(filter, updateDoc, options);
+    const result = await userCollection.updateOne(filter, updateDoc, options);
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
   }
 });
 
-app.delete('/delete-user/:email',verifyJWT,verifyAdmin,verifyJWT, async (req, res) => {
-  try {
-    const id = req.params.id;
-    const query = {_id: new ObjectId(id)};
-    const result = await usersCollection.deleteOne(query);
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
-  }
-});
 
-app.post("/new-class",verifyJWT,verifyInstructor, async (req, res) => {
+
+// ! CLASSES ROUTES
+app.post('/new-class', verifyJWT, verifyInstructor, async (req, res) => {
   try {
     const newClass = req.body;
+    newClass.availableSeats = parseInt(newClass.availableSeats)
     const result = await classesCollection.insertOne(newClass);
     res.send(result);
   } catch (error) {
@@ -191,111 +203,116 @@ app.post("/new-class",verifyJWT,verifyInstructor, async (req, res) => {
   }
 });
 
-app.get("/classes", async (req, res) => {
-    try {
-      const query = { status: 'approved' };
-      const result = await classesCollection.find(query).toArray();
-      res.send(result);
-    } catch (error) {
-      res.status(500).send({ error: 'Failed to fetch classes' });
-    }
-});
 
-app.get("/classes/:email",verifyJWT,verifyInstructor, async (req, res) => {
-    try {
-      const email = req.params.email;
-      const query = { instructorEmail: email };
-      const result = await classesCollection.find(query).toArray();
-      res.send(result);
-    } catch (error) {
-      res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
-    }
+
+// GET ALL CLASSES ADDED BY INSTRUCTOR
+app.get('/classes/:email', verifyJWT, verifyInstructor, async (req, res) => {
+  try {
+    const email = req.params.email;
+    const query = { instructorEmail: email };
+    const result = await classesCollection.find(query).toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+  }
 })
 
-//manage classes
-app.get("/classes-manage", async (req, res) => {
-    try {
-      const result = await classesCollection.find().toArray();
-      res.send(result);
-    } catch (error) {
-      res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
-    }
-});
-  
 
-//updata classes stust and reason
-app.patch("/change-status/:id",verifyJWT,verifyAdmin, async (req, res) => {
-    try {
-      const id = req.params.id;
-      const status = req.body.status;
-      const reason = req.body.reason;
-      const filter = { _id: new ObjectId(id) };
-      const options = { upsert: true };
-      const updateDoc = {
-        $set: {
-          status: status,
-          reason: reason,
-        },
-      };
-      const result = await classesCollection.updateOne(filter, updateDoc, options);
-      res.send(result);
-    } catch (error) {
-      res.status(500).send({ error: 'Failed to update class status' });
-    }
+
+
+// GET ALL CLASSES
+app.get('/classes', async (req, res) => {
+  try {
+    const query = { status: 'approved' };
+    const result = await classesCollection.find(query).toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch classes' });
+  }
 });
 
 
-//get approved classes
-app.get("/approved-manage", async (req, res) => {
-    try {
-      const query = {status: "approved"};
-      const result = await classesCollection.find(query).toArray();
-      res.send(result);
-    } catch (error) {
-      res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
-    }
+app.get('/classes-manage', async (req, res) => {
+  try {
+    const result = await classesCollection.find().toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+  }
 });
 
 
-//get signle class details
-app.get("/class/:id", async (req, res) => {
-    try {
-      const id = req.params.id;
-      const query = {_id: new ObjectId(id)};
-      const result = await classesCollection.findOne(query);
-      res.send(result);
-    } catch (error) {
-      res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+// Change status of a class
+app.put('/change-status/:id', verifyJWT, verifyAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const status = req.body.status;
+    console.log(req.body)
+    const reason = req.body.reason;
+    const filter = { _id: new ObjectId(id) };
+    console.log("🚀 ~ file: index.js:180 ~ app.put ~ reason:", reason)
+    const options = { upsert: true };
+    const updateDoc = {
+      $set: {
+        status: status,
+        reason: reason
+      }
     }
+    const result = await classesCollection.updateOne(filter, updateDoc, options);
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to update class status' });
+  }
 });
+
+
+
+
+
+
+// Update a class
 
 // update class details (all data)
-app.put("/update-class/:id",verifyJWT,verifyInstructor, async (req, res) => {
-    try {
-      const id = req.params.id;
-      const updateClass = req.body;
-      const filter = {_id: new ObjectId(id)};
-      const options ={upsert: true};
-      const updateDoc = {
-        $set:{
-            name : updateClass.name,
-            description : updateClass.description,
-            price: updateClass.price,
-            availableSeats: parseInt(updateClass.availableSeats),
-            videoLink: updateClass.videoLink,
-            status: 'pending',
-        }
-      };
-      const result = await classesCollection.updateOne(filter, updateDoc, options);
-      res.send(result);
-    } catch (error) {
-      res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+app.put('/update-class/:id', verifyJWT, verifyInstructor, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updatedClass = req.body;
+    const filter = { _id: new ObjectId(id) };
+    const options = { upsert: true };
+    const updateDoc = {
+      $set: {
+        name: updatedClass.name,
+        description: updatedClass.description,
+        price: updatedClass.price,
+        availableSeats: parseInt(updatedClass.availableSeats),
+        videoLink: updatedClass.videoLink,
+        status: 'pending'
+      }
     }
+    const result = await classesCollection.updateOne(filter, updateDoc, options);
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+  }
 });
 
 
-// Cart routes 
-app.post("/add-to-cart",verifyJWT, async (req, res) => {
+// Get single class by id for details page
+app.get('/class/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const query = { _id: new ObjectId(id) };
+    const result = await classesCollection.findOne(query);
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
+  }
+});
+
+
+// ! CART ROUTES
+// ADD TO CART
+app.post('/add-to-cart', verifyJWT, async (req, res) => {
   try {
     const newCartItem = req.body;
     const result = await cartCollection.insertOne(newCartItem);
@@ -305,17 +322,16 @@ app.post("/add-to-cart",verifyJWT, async (req, res) => {
   }
 });
 
-//get Cart item by id
-app.get("/cart-item/:id",verifyJWT, async (req, res) => {
+
+
+// Get cart item id for checking if a class is already in cart
+app.get('/cart-item/:id', verifyJWT, async (req, res) => {
   try {
     const id = req.params.id;
-    const email = req.body.email;
-    const query = {
-      classId: id,
-      userMail: email
-    };
-    const projection = {classId: 1};
-    const result = await cartCollection.findOne(query,{projection: projection});
+    const email = req.query.email;
+    const query = { classId: id, userMail: email };
+    const projection = { classId: 1 };
+    const result = await cartCollection.findOne(query, { projection: projection });
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
@@ -323,16 +339,15 @@ app.get("/cart-item/:id",verifyJWT, async (req, res) => {
 });
 
 
-//get Cart bu user email
-app.get("/cart/:email",verifyJWT, async (req, res) => {
+app.get('/cart/:email', verifyJWT, async (req, res) => {
   try {
     const email = req.params.email;
-    const query = {userMail: email};
-    const projection = {classId: 1};
-    const carts = await cartCollection.find(query,{projection: projection});
-    const classIds = carts.map((cart) => new ObjectId(cart.classId));
-    const query2 = {_id:{$in: classIds}};
-    const result = await cartCollection.find(query2).toArray();
+    const query = { userMail: email };
+    const projection = { classId: 1 };
+    const carts = await cartCollection.find(query, { projection: projection }).toArray();
+    const classIds = carts.map(cart => new ObjectId(cart.classId));
+    const query2 = { _id: { $in: classIds } };
+    const result = await classesCollection.find(query2).toArray();
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
@@ -340,11 +355,12 @@ app.get("/cart/:email",verifyJWT, async (req, res) => {
 });
 
 
-//delete cart item
-app.delete("/delete-cart-item/:id",verifyJWT, async (req, res) => {
+
+// Delete a item form cart
+app.delete('/delete-cart-item/:id', verifyJWT, async (req, res) => {
   try {
     const id = req.params.id;
-    const query = {classId: id};
+    const query = { classId: id };
     const result = await cartCollection.deleteOne(query);
     res.send(result);
   } catch (error) {
@@ -353,10 +369,11 @@ app.delete("/delete-cart-item/:id",verifyJWT, async (req, res) => {
 });
 
 
-//Enroll,ent Routes
-app.get("/popular_classes", async (req, res) => {
+
+// ! ENROLLED ROUTES
+app.get('/popular_classes', async (req, res) => {
   try {
-    const result = await classesCollection.find().sort({totalEnrolled:-1}).limit(6).toArray();
+    const result = await classesCollection.find().sort({ totalEnrolled: -1 }).limit(6).toArray();
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
@@ -364,15 +381,16 @@ app.get("/popular_classes", async (req, res) => {
 });
 
 
-app.get('/popular_instructors', async (req, res) => {
+app.get('/popular-instructors', async (req, res) => {
   try {
     const pipeline = [
       {
-        $group : {
+        $group: {
           _id: "$instructorEmail",
-          totalEnrolled:{$sum : "totalErolled"}
+          totalEnrolled: { $sum: "$totalEnrolled" },
         }
-      },{
+      },
+      {
         $lookup: {
           from: "users",
           localField: "_id",
@@ -381,23 +399,28 @@ app.get('/popular_instructors', async (req, res) => {
         }
       },
       {
-        $project:{
-          _id: 0,
-          instructor:{
-            $arrayElemAt:["$instructor",0]
-          },
-          totalEnrolled: 1
-        }        
+        $match: {
+          "instructor.role": "instructor"
+        }
       },
       {
-        $sort:{
-          totalEnrolled:-1
+        $project: {
+          _id: 0,
+          instructor: {
+            $arrayElemAt: ["$instructor", 0]
+          },
+          totalEnrolled: 1
+        }
+      },
+      {
+        $sort: {
+          totalEnrolled: -1
         }
       },
       {
         $limit: 6
       }
-    ];
+    ]
     const result = await classesCollection.aggregate(pipeline).toArray();
     res.send(result);
   } catch (error) {
@@ -406,20 +429,24 @@ app.get('/popular_instructors', async (req, res) => {
 });
 
 
-//Admin status
-app.get('/admin-stats',verifyJWT,verifyAdmin, async (req, res) => {
+// Admins stats 
+app.get('/admin-stats', verifyJWT, verifyAdmin, async (req, res) => {
   try {
-    const approvedCllases = ((await classesCollection.find({status: 'approved'})).toArray()).length;
-    const pendingCllases = ((await classesCollection.find({status: 'pending'})).toArray()).length;
-    const instructor = ((await classesCollection.find({role: 'instructor'})).toArray()).length;
-    const totalCllases = ((await classesCollection.find()).toArray()).length;
-    const totalEnrolled = ((await classesCollection.find()).toArray()).length;
+    // Get approved classes and pending classes and instructors 
+    const approvedClasses = (await classesCollection.find({ status: 'approved' }).toArray()).length;
+    const pendingClasses = (await classesCollection.find({ status: 'pending' }).toArray()).length;
+    const instructors = (await userCollection.find({ role: 'instructor' }).toArray()).length;
+    const totalClasses = (await classesCollection.find().toArray()).length;
+    const totalEnrolled = (await enrolledCollection.find().toArray()).length;
+    // const totalRevenue = await paymentCollection.find().toArray();
+    // const totalRevenueAmount = totalRevenue.reduce((total, current) => total + parseInt(current.price), 0);
     const result = {
-      approvedCllases,
-      pendingCllases,
-      instructor,
-      totalCllases,
-      totalEnrolled
+      approvedClasses,
+      pendingClasses,
+      instructors,
+      totalClasses,
+      totalEnrolled,
+      // totalRevenueAmount
     }
     res.send(result);
   } catch (error) {
@@ -428,10 +455,10 @@ app.get('/admin-stats',verifyJWT,verifyAdmin, async (req, res) => {
 });
 
 
-//get all instructor
-app.get("/instructors", async (req, res) => {
+// !GET ALL INSTrUCTOR  
+app.get('/instructors', async (req, res) => {
   try {
-    const result = await classesCollection.find({role: 'instructor'}).toArray();
+    const result = await userCollection.find({ role: 'instructor' }).toArray();
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
@@ -439,42 +466,46 @@ app.get("/instructors", async (req, res) => {
 });
 
 
-app.get("/enrolled-classes/:email",verifyJWT, async (req, res) => {
+app.get('/enrolled-classes/:email', verifyJWT, async (req, res) => {
   try {
     const email = req.params.email;
-    const query = {userMail: email};
+    const query = { userEmail: email };
     const pipeline = [
       {
         $match: query
       },
       {
         $lookup: {
-          from : "classes",
-          localField: "ClasssesId",
+          from: "classes",
+          localField: "classesId",
           foreignField: "_id",
           as: "classes"
         }
-      }, {
+      },
+      {
         $unwind: "$classes"
       },
       {
-        $lookup : {
-          from : "users",
+        $lookup: {
+          from: "users",
           localField: "classes.instructorEmail",
           foreignField: "email",
           as: "instructor"
         }
-      }, {
-        $project:{
+      },
+      {
+        $project: {
           _id: 0,
-          instructor:{
+          classes: 1,
+          instructor: {
             $arrayElemAt: ["$instructor", 0]
-          },
-          classes:1
+          }
         }
       }
-    ];
+
+    ]
     const result = await enrolledCollection.aggregate(pipeline).toArray();
+    // const result = await enrolledCollection.find(query).toArray();
     res.send(result);
   } catch (error) {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
@@ -482,8 +513,9 @@ app.get("/enrolled-classes/:email",verifyJWT, async (req, res) => {
 });
 
 
-//appliend for instructors
-app.post("/ass-instructor", async (req, res) => {
+
+// Applied route 
+app.post('/as-instructor', async (req, res) => {
   try {
     const data = req.body;
     const result = await appliedCollection.insertOne(data);
@@ -494,7 +526,7 @@ app.post("/ass-instructor", async (req, res) => {
 });
 
 
-app.get("/applied-instructors/:email", async (req, res) => {
+app.get('/applied-instructors/:email',   async (req, res) => {
   try {
     const email = req.params.email;
     const result = await appliedCollection.findOne({email});
@@ -503,9 +535,6 @@ app.get("/applied-instructors/:email", async (req, res) => {
     res.status(500).send({ error: 'Failed to fetch classes by instructor email' });
   }
 });
-
-
-
 
 app.get('/', (req, res) => {
   res.send('Le Hai Nam DHCNTT20A');
